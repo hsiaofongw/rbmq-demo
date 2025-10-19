@@ -1,0 +1,14 @@
+# $ docker run -d --hostname my-rabbit --name some-rabbit rabbitmq:3
+
+services:
+  broker:
+    container_name: rbmq
+    hostname: rbmq
+    image: rabbitmq:3
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "[::1]:5672:5672"
+    stdin_open: true
+    tty: true
+
+    
