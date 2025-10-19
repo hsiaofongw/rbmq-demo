@@ -19,6 +19,8 @@ func main() {
 	flag.Parse()
 
 	sm := pkgsafemap.NewSafeMap()
+	defer sm.Close()
+
 	cr := pkgconnreg.NewConnRegistry(sm)
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
