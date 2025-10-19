@@ -1,9 +1,12 @@
 package connreg
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
+	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
 	"github.com/gorilla/websocket"
 )
 
@@ -26,61 +29,123 @@ type EchoPayload struct {
 	SeqID           uint64        `json:"seq_id"`
 }
 
+type ConnectionAttributes map[string]string
+
 type ConnRegistryData struct {
-	NodeName      *string         `json:"node_name,omitempty"`
-	ConnectedAt   uint64          `json:"connected_at"`
-	RegisteredAt  *uint64         `json:"registered_at,omitempty"`
-	LastHeartbeat *uint64         `json:"last_heartbeat,omitempty"`
-	WsConn        *websocket.Conn `json:"-"`
+	NodeName      *string              `json:"node_name,omitempty"`
+	ConnectedAt   uint64               `json:"connected_at"`
+	RegisteredAt  *uint64              `json:"registered_at,omitempty"`
+	LastHeartbeat *uint64              `json:"last_heartbeat,omitempty"`
+	WsConn        *websocket.Conn      `json:"-"`
+	Attributes    ConnectionAttributes `json:"attributes,omitempty"`
 }
 
-type ConnRegistry map[string]*ConnRegistryData
+func cloneConnRegistryData(dataany interface{}) interface{} {
+	data, ok := dataany.(*ConnRegistryData)
+	if !ok {
+		panic(fmt.Errorf("failed to convert dataany to *ConnRegistryData"))
+	}
 
-func (cr ConnRegistry) OpenConnection(conn *websocket.Conn) {
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Failed to marshal connection registry data: %v", err)
+		panic(err)
+	}
+
+	var cloned *ConnRegistryData
+	err = json.Unmarshal(bytes, &cloned)
+	if err != nil {
+		panic(err)
+	}
+	return cloned
+}
+
+type ConnRegistry struct {
+	datastore pkgsafemap.DataStore
+}
+
+func (cr *ConnRegistry) OpenConnection(conn *websocket.Conn) {
 	now := uint64(time.Now().Unix())
-	n := len(cr)
-	cr[conn.RemoteAddr().String()] = &ConnRegistryData{
+	key := conn.RemoteAddr().String()
+	connRegData := &ConnRegistryData{
 		ConnectedAt: now,
 		WsConn:      conn,
+		Attributes:  make(ConnectionAttributes),
 	}
-	log.Printf("Opening connection from %s, number of connections: %d -> %d", conn.RemoteAddr(), n, len(cr))
+	cr.datastore.Set(key, connRegData)
 }
 
-func (cr ConnRegistry) DropConnections(keys []string) {
-	for _, key := range keys {
-		n := len(cr)
-		delete(cr, key)
-		log.Printf("Dropped connection %s, number of connections: %d -> %d", key, n, len(cr))
-	}
+func (cr *ConnRegistry) CloseConnection(conn *websocket.Conn) {
+	key := conn.RemoteAddr().String()
+	cr.datastore.Delete(key)
 }
 
-func (cr ConnRegistry) CloseConnection(conn *websocket.Conn) {
-	cr.DropConnections([]string{conn.RemoteAddr().String()})
-}
-
-func (cr ConnRegistry) Register(conn *websocket.Conn, payload RegisterPayload) {
+func (cr *ConnRegistry) Register(conn *websocket.Conn, payload RegisterPayload) error {
 	log.Printf("Registering connection from %s, node name: %s", conn.RemoteAddr(), payload.NodeName)
-	now := uint64(time.Now().Unix())
-	entry := cr[conn.RemoteAddr().String()]
-	if entry == nil {
-		log.Printf("Connection from %s not found in registry", conn.RemoteAddr())
-		return
+	key := conn.RemoteAddr().String()
+
+	_, found := cr.datastore.Get(key, func(valany interface{}) error {
+		entry := valany.(*ConnRegistryData)
+		now := uint64(time.Now().Unix())
+		if entry == nil {
+			return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
+		}
+		entry.NodeName = &payload.NodeName
+		entry.RegisteredAt = &now
+		return nil
+	})
+
+	if !found {
+		return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
 	}
-	entry.NodeName = &payload.NodeName
-	entry.RegisteredAt = &now
+	return nil
 }
 
-func (cr ConnRegistry) UpdateHeartbeat(conn *websocket.Conn) {
-	log.Printf("Updating heartbeat for connection from %s", conn.RemoteAddr())
-	now := uint64(time.Now().Unix())
-	entry := cr[conn.RemoteAddr().String()]
-	if entry == nil {
-		log.Printf("Connection from %s not found in registry", conn.RemoteAddr())
-		return
+func (cr *ConnRegistry) UpdateHeartbeat(conn *websocket.Conn) error {
+	key := conn.RemoteAddr().String()
+	_, found := cr.datastore.Get(key, func(valany interface{}) error {
+		entry := valany.(*ConnRegistryData)
+		now := uint64(time.Now().Unix())
+		entry.LastHeartbeat = &now
+
+		return nil
+	})
+
+	if !found {
+		return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
 	}
-	entry.LastHeartbeat = &now
+	return nil
 }
 
-func NewConnRegistry() ConnRegistry {
-	return make(ConnRegistry)
+func (cr *ConnRegistry) SetAttribute(conn *websocket.Conn, key string, value string) error {
+	connkey := conn.RemoteAddr().String()
+	_, found := cr.datastore.Get(connkey, func(valany interface{}) error {
+		entry := valany.(*ConnRegistryData)
+		entry.Attributes[key] = value
+		return nil
+	})
+	if !found {
+		return fmt.Errorf("connection from %s not found in registry", conn.RemoteAddr())
+	}
+	return nil
+}
+
+func (cr *ConnRegistry) Dump() map[string]*ConnRegistryData {
+	dummped := cr.datastore.Dump(cloneConnRegistryData)
+	result := make(map[string]*ConnRegistryData)
+	for k, v := range dummped {
+		result[k] = v.(*ConnRegistryData)
+	}
+	return result
+}
+
+func (cr *ConnRegistry) Count() int {
+	return cr.datastore.Len()
+}
+
+func NewConnRegistry(datastore pkgsafemap.DataStore) *ConnRegistry {
+	connReg := &ConnRegistry{
+		datastore: datastore,
+	}
+	return connReg
 }

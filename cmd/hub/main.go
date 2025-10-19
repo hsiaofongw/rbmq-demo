@@ -7,6 +7,7 @@ import (
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkghandler "example.com/rbmq-demo/pkg/handler"
+	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
 	"github.com/gorilla/websocket"
 )
 
@@ -17,7 +18,8 @@ var upgrader = websocket.Upgrader{}
 func main() {
 	flag.Parse()
 
-	cr := pkgconnreg.NewConnRegistry()
+	sm := pkgsafemap.NewSafeMap()
+	cr := pkgconnreg.NewConnRegistry(sm)
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
 	connsHandler := pkghandler.NewConnsHandler(cr)

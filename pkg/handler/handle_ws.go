@@ -14,10 +14,10 @@ import (
 
 type WebsocketHandler struct {
 	upgrader *websocket.Upgrader
-	cr       pkgconnreg.ConnRegistry
+	cr       *pkgconnreg.ConnRegistry
 }
 
-func NewWebsocketHandler(upgrader *websocket.Upgrader, cr pkgconnreg.ConnRegistry) *WebsocketHandler {
+func NewWebsocketHandler(upgrader *websocket.Upgrader, cr *pkgconnreg.ConnRegistry) *WebsocketHandler {
 	return &WebsocketHandler{
 		upgrader: upgrader,
 		cr:       cr,
@@ -26,7 +26,7 @@ func NewWebsocketHandler(upgrader *websocket.Upgrader, cr pkgconnreg.ConnRegistr
 
 const GCTimeout = 10 * time.Second
 
-func handleTextMessage(conn *websocket.Conn, cr pkgconnreg.ConnRegistry, msg []byte) error {
+func handleTextMessage(conn *websocket.Conn, cr *pkgconnreg.ConnRegistry, msg []byte) error {
 	var payload pkgframing.MessagePayload
 	err := json.Unmarshal(msg, &payload)
 	if err != nil {
@@ -70,6 +70,7 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cr.OpenConnection(conn)
+	log.Printf("Connection opened for %s, total connections: %d", conn.RemoteAddr(), cr.Count())
 
 	defer func() {
 		log.Printf("Closing WebSocket connection: %s", conn.RemoteAddr())
@@ -78,6 +79,7 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to close WebSocket connection for %s: %v", conn.RemoteAddr(), err)
 		}
 		cr.CloseConnection(conn)
+		log.Printf("Connection closed for %s, remaining connections: %d", conn.RemoteAddr(), cr.Count())
 	}()
 
 	var gcTimer *time.Timer = nil
