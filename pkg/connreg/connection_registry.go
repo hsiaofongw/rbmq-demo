@@ -29,6 +29,14 @@ type EchoPayload struct {
 	SeqID           uint64        `json:"seq_id"`
 }
 
+func (echopayload *EchoPayload) CalculateDelays(now time.Time) (rtt time.Duration, onTrip time.Duration, backTrip time.Duration) {
+	rtt = now.Sub(time.UnixMilli(int64(echopayload.Timestamp)))
+	onTrip = time.UnixMilli(int64(echopayload.ServerTimestamp)).Sub(time.UnixMilli(int64(echopayload.Timestamp)))
+	backTrip = now.Sub(time.UnixMilli(int64(echopayload.ServerTimestamp)))
+
+	return rtt, onTrip, backTrip
+}
+
 type ConnectionAttributes map[string]string
 
 type ConnRegistryData struct {

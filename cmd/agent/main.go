@@ -58,15 +58,9 @@ func main() {
 				if payload.Echo != nil &&
 					payload.Echo.CorrelationID == correlationID &&
 					payload.Echo.Direction == pkgconnreg.EchoDirectionS2C {
-					log.Printf("Received echo response from %s: %s", c.RemoteAddr(), string(msg))
 
-					now := uint64(time.Now().UnixMilli())
-					rtt := time.Duration(now-payload.Echo.Timestamp) * time.Millisecond
-					onTrip := time.Duration(payload.Echo.ServerTimestamp-payload.Echo.Timestamp) * time.Millisecond
-					backTrip := time.Duration(now-payload.Echo.ServerTimestamp) * time.Millisecond
-
-					log.Printf("Seq: %d, RTT: %d ms, On-trip: %d ms, Back-trip: %d ms", payload.Echo.SeqID, rtt.Milliseconds(), onTrip.Milliseconds(), backTrip.Milliseconds())
-
+					rtt, onTrip, backTrip := payload.Echo.CalculateDelays(time.Now())
+					log.Printf("Received echo reply: Seq: %d, RTT: %d ms, On-trip: %d ms, Back-trip: %d ms", payload.Echo.SeqID, rtt.Milliseconds(), onTrip.Milliseconds(), backTrip.Milliseconds())
 				}
 
 			default:
@@ -125,7 +119,6 @@ func main() {
 				log.Printf("Failed to marshal echo message: %v", err)
 				continue
 			}
-			log.Printf("Sending echo message: %s", string(jsonMsg))
 			err = c.WriteMessage(websocket.TextMessage, jsonMsg)
 			if err != nil {
 				log.Printf("Failed to write echo message: %v", err)
