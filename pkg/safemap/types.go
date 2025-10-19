@@ -1,5 +1,7 @@
 package safemap
 
+import "sync"
+
 type DataStore interface {
 	Get(key string, op func(value interface{}) error) (err error, found bool)
 	Set(key string, value interface{})
@@ -10,7 +12,10 @@ type DataStore interface {
 
 type SafeMap struct {
 	store      map[string]interface{}
-	requestsCh chan chan interface{}
-	closeCh    chan interface{}
+	requestsCh chan func()
+	closeCh    chan struct{}
 	closed     bool
+	// A sync.Mutex is used here only to protect the 'closed' flag
+	// during the Close() operation to prevent a race condition on that specific field.
+	closeMutex sync.Mutex
 }
