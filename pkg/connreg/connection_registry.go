@@ -19,17 +19,19 @@ const (
 )
 
 type EchoPayload struct {
-	Direction     EchoDirection `json:"direction"`
-	CorrelationID string        `json:"correlation_id"`
-	Timestamp     uint64        `json:"timestamp"`
-	SeqID         uint64        `json:"seq_id"`
+	Direction       EchoDirection `json:"direction"`
+	CorrelationID   string        `json:"correlation_id"`
+	ServerTimestamp uint64        `json:"server_timestamp"`
+	Timestamp       uint64        `json:"timestamp"`
+	SeqID           uint64        `json:"seq_id"`
 }
 
 type ConnRegistryData struct {
-	NodeName      *string `json:"node_name,omitempty"`
-	ConnectedAt   uint64  `json:"connected_at"`
-	RegisteredAt  *uint64 `json:"registered_at,omitempty"`
-	LastHeartbeat *uint64 `json:"last_heartbeat,omitempty"`
+	NodeName      *string         `json:"node_name,omitempty"`
+	ConnectedAt   uint64          `json:"connected_at"`
+	RegisteredAt  *uint64         `json:"registered_at,omitempty"`
+	LastHeartbeat *uint64         `json:"last_heartbeat,omitempty"`
+	WsConn        *websocket.Conn `json:"-"`
 }
 
 type ConnRegistry map[string]*ConnRegistryData
@@ -39,14 +41,21 @@ func (cr ConnRegistry) OpenConnection(conn *websocket.Conn) {
 	n := len(cr)
 	cr[conn.RemoteAddr().String()] = &ConnRegistryData{
 		ConnectedAt: now,
+		WsConn:      conn,
 	}
 	log.Printf("Opening connection from %s, number of connections: %d -> %d", conn.RemoteAddr(), n, len(cr))
 }
 
+func (cr ConnRegistry) DropConnections(keys []string) {
+	for _, key := range keys {
+		n := len(cr)
+		delete(cr, key)
+		log.Printf("Dropped connection %s, number of connections: %d -> %d", key, n, len(cr))
+	}
+}
+
 func (cr ConnRegistry) CloseConnection(conn *websocket.Conn) {
-	n := len(cr)
-	delete(cr, conn.RemoteAddr().String())
-	log.Printf("Closed connection from %s, number of connections: %d -> %d", conn.RemoteAddr(), n, len(cr))
+	cr.DropConnections([]string{conn.RemoteAddr().String()})
 }
 
 func (cr ConnRegistry) Register(conn *websocket.Conn, payload RegisterPayload) {

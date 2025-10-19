@@ -2,27 +2,62 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
+	pkgframing "example.com/rbmq-demo/pkg/framing"
 	"github.com/gorilla/websocket"
 )
 
 type WebsocketHandler struct {
 	upgrader *websocket.Upgrader
-	cr       *pkgconnreg.ConnRegistry
+	cr       pkgconnreg.ConnRegistry
 }
 
 func NewWebsocketHandler(upgrader *websocket.Upgrader, cr pkgconnreg.ConnRegistry) *WebsocketHandler {
 	return &WebsocketHandler{
 		upgrader: upgrader,
+		cr:       cr,
 	}
 }
 
-type MessagePayload struct {
-	Register *pkgconnreg.RegisterPayload `json:"register,omitempty"`
-	Echo     *pkgconnreg.EchoPayload     `json:"echo,omitempty"`
+const GCTimeout = 10 * time.Second
+
+func handleTextMessage(conn *websocket.Conn, cr pkgconnreg.ConnRegistry, msg []byte) error {
+	var payload pkgframing.MessagePayload
+	err := json.Unmarshal(msg, &payload)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal message from %s: %v", conn.RemoteAddr(), err)
+	}
+	if payload.Register != nil {
+		cr.Register(conn, *payload.Register)
+	}
+	if payload.Echo != nil {
+		if payload.Echo.Direction == pkgconnreg.EchoDirectionC2S {
+			cr.UpdateHeartbeat(conn)
+			responsePayload := pkgframing.MessagePayload{
+				Echo: &pkgconnreg.EchoPayload{
+					Direction:       pkgconnreg.EchoDirectionS2C,
+					CorrelationID:   payload.Echo.CorrelationID,
+					ServerTimestamp: uint64(time.Now().UnixMilli()),
+					Timestamp:       payload.Echo.Timestamp,
+					SeqID:           payload.Echo.SeqID,
+				},
+			}
+			responseJSON, err := json.Marshal(responsePayload)
+			if err != nil {
+				return fmt.Errorf("failed to marshal response payload for %s: %v", conn.RemoteAddr(), err)
+			}
+			err = conn.WriteMessage(websocket.TextMessage, responseJSON)
+			if err != nil {
+				return fmt.Errorf("failed to write response message to %s: %v", conn.RemoteAddr(), err)
+			}
+		}
+	}
+	return nil
 }
 
 func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -45,36 +80,44 @@ func (h *WebsocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cr.CloseConnection(conn)
 	}()
 
-	for {
-		msgType, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("Failed to read message from %s: %v", conn.RemoteAddr(), err)
-			break
+	var gcTimer *time.Timer = nil
+	gcTimer = time.NewTimer(GCTimeout)
+	defer func() {
+		if gcTimer != nil {
+			gcTimer.Stop()
+			gcTimer = nil
 		}
+	}()
 
-		switch msgType {
-		case websocket.TextMessage:
-			var payload MessagePayload
-			err := json.Unmarshal(msg, &payload)
+	connErrCh := make(chan error)
+
+	go func() {
+		for {
+			msgType, msg, err := conn.ReadMessage()
 			if err != nil {
-				log.Printf("Failed to unmarshal message from %s: %v", conn.RemoteAddr(), err)
+				connErrCh <- fmt.Errorf("failed to read message from %s: %v", conn.RemoteAddr(), err)
 				break
 			}
-			if payload.Register != nil {
-				cr.Register(conn, *payload.Register)
-			}
-			if payload.Echo != nil {
-				cr.UpdateHeartbeat(conn)
-			}
-		default:
-			log.Printf("Received unknown message type from %s: %d", conn.RemoteAddr(), msgType)
-		}
 
-		log.Printf("Received message from %s: %s", conn.RemoteAddr(), string(msg))
-		err = conn.WriteMessage(msgType, msg)
+			switch msgType {
+			case websocket.TextMessage:
+				if err := handleTextMessage(conn, cr, msg); err != nil {
+					log.Printf("Failed to handle text message from %s: %v", conn.RemoteAddr(), err)
+					continue
+				}
+				gcTimer.Reset(GCTimeout)
+			default:
+				log.Printf("Received unknown message type from %s: %d", conn.RemoteAddr(), msgType)
+			}
+		}
+	}()
+
+	select {
+	case <-gcTimer.C:
+		log.Printf("Garbage collection timeout for %s, closing connection", conn.RemoteAddr())
+	case err := <-connErrCh:
 		if err != nil {
-			log.Printf("Failed to write message to %s: %v", conn.RemoteAddr(), err)
-			break
+			log.Printf("Connection error for %s: %v", conn.RemoteAddr(), err)
 		}
 	}
 }
