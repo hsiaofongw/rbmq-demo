@@ -5,6 +5,7 @@ import (
 )
 
 type MessagePayload struct {
-	Register *pkgconnreg.RegisterPayload `json:"register,omitempty"`
-	Echo     *pkgconnreg.EchoPayload     `json:"echo,omitempty"`
+	Register               *pkgconnreg.RegisterPayload               `json:"register,omitempty"`
+	Echo                   *pkgconnreg.EchoPayload                   `json:"echo,omitempty"`
+	AttributesAnnouncement *pkgconnreg.AttributesAnnouncementPayload `json:"attributes_announcement,omitempty"`
 }

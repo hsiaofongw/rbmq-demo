@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 )
 
@@ -25,6 +26,14 @@ func main() {
 		WebSocketPath: *path,
 		NodeName:      *nodeName,
 	}
+
+	attributes := make(pkgconnreg.ConnectionAttributes)
+	attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
+
+	// For now, just use node name, later we will use a broker generated name
+	attributes[pkgnodereg.AttributeKeyRabbitMQQueueName] = *nodeName
+
+	agent.NodeAttributes = attributes
 
 	if err := agent.Init(); err != nil {
 		log.Fatalf("Failed to initialize agent: %v", err)

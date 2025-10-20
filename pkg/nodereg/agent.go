@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sync"
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
@@ -13,15 +14,23 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	AttributeKeyPingCapability    = "CapabilityPing"
+	AttributeKeyRabbitMQQueueName = "RabbitMQQueueName"
+)
+
 type NodeRegistrationAgent struct {
-	ServerAddress string
-	WebSocketPath string
-	NodeName      string
-	CorrelationID *string
-	SeqID         *uint64
-	TickInterval  *time.Duration
-	intialized    bool
-	closeCh       chan struct{}
+	ServerAddress  string
+	WebSocketPath  string
+	NodeName       string
+	CorrelationID  *string
+	SeqID          *uint64
+	TickInterval   *time.Duration
+	intialized     bool
+	closed         bool
+	closeMutex     sync.Mutex
+	closeCh        chan struct{}
+	NodeAttributes pkgconnreg.ConnectionAttributes
 }
 
 func (agent *NodeRegistrationAgent) Init() error {
@@ -146,6 +155,13 @@ func (agent *NodeRegistrationAgent) Run() error {
 		registerMsg := pkgframing.MessagePayload{
 			Register: &registerPayload,
 		}
+		if agent.NodeAttributes != nil {
+			registerMsg.AttributesAnnouncement = &pkgconnreg.AttributesAnnouncementPayload{
+				Attributes: agent.NodeAttributes,
+			}
+			s, _ := json.Marshal(registerMsg.AttributesAnnouncement)
+			log.Printf("Will announcing attributes: %+v", string(s))
+		}
 		log.Printf("Sending register message")
 		err = agent.sendMessage(c, registerMsg)
 		if err != nil {
@@ -180,6 +196,7 @@ func (agent *NodeRegistrationAgent) Run() error {
 					return
 				}
 			case <-agent.closeCh:
+				agent.closed = true
 				errCh <- nil
 				return
 			}
@@ -190,8 +207,15 @@ func (agent *NodeRegistrationAgent) Run() error {
 }
 
 func (agent *NodeRegistrationAgent) Shutdown() error {
+	agent.closeMutex.Lock()
+	defer agent.closeMutex.Unlock()
+
 	if !agent.intialized {
 		return fmt.Errorf("agent not initialized")
+	}
+
+	if agent.closed {
+		return fmt.Errorf("agent already closed")
 	}
 
 	close(agent.closeCh)

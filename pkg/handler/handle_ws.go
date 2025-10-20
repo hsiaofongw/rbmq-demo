@@ -57,6 +57,9 @@ func handleTextMessage(conn *websocket.Conn, cr *pkgconnreg.ConnRegistry, msg []
 			}
 		}
 	}
+	if payload.AttributesAnnouncement != nil {
+		cr.SetAttributes(conn, payload.AttributesAnnouncement)
+	}
 	return nil
 }
 

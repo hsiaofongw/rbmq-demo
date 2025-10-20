@@ -29,6 +29,11 @@ type EchoPayload struct {
 	SeqID           uint64        `json:"seq_id"`
 }
 
+type AttributesAnnouncementPayload struct {
+	Attributes  ConnectionAttributes `json:"attributes,omitempty"`
+	Withdrawals []string             `json:"withdrawals,omitempty"`
+}
+
 func (echopayload *EchoPayload) CalculateDelays(now time.Time) (rtt time.Duration, onTrip time.Duration, backTrip time.Duration) {
 	rtt = now.Sub(time.UnixMilli(int64(echopayload.Timestamp)))
 	onTrip = time.UnixMilli(int64(echopayload.ServerTimestamp)).Sub(time.UnixMilli(int64(echopayload.Timestamp)))
@@ -125,11 +130,21 @@ func (cr *ConnRegistry) UpdateHeartbeat(conn *websocket.Conn) error {
 	return nil
 }
 
-func (cr *ConnRegistry) SetAttribute(conn *websocket.Conn, key string, value string) error {
+func (cr *ConnRegistry) SetAttributes(conn *websocket.Conn, announcement *AttributesAnnouncementPayload) error {
 	connkey := conn.RemoteAddr().String()
 	_, found := cr.datastore.Get(connkey, func(valany interface{}) error {
 		entry := valany.(*ConnRegistryData)
-		entry.Attributes[key] = value
+		attrs := make(ConnectionAttributes)
+		for k, v := range entry.Attributes {
+			attrs[k] = v
+		}
+		for _, withdrawal := range announcement.Withdrawals {
+			delete(attrs, withdrawal)
+		}
+		for k, v := range announcement.Attributes {
+			attrs[k] = v
+		}
+		entry.Attributes = attrs
 		return nil
 	})
 	if !found {
