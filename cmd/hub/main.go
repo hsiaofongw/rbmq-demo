@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkghandler "example.com/rbmq-demo/pkg/handler"
@@ -15,8 +21,13 @@ var addr = flag.String("addr", "localhost:8080", "http service address")
 
 var upgrader = websocket.Upgrader{}
 
+const serverShutdownTimeout = 30 * time.Second
+
 func main() {
 	flag.Parse()
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	sm := pkgsafemap.NewSafeMap()
 	defer sm.Close()
@@ -31,13 +42,32 @@ func main() {
 	muxer.Handle("/conns", connsHandler)
 
 	server := http.Server{
-		Addr:    *addr,
 		Handler: muxer,
 	}
 
-	log.Println("Server started", "Using address:", *addr)
-	err := server.ListenAndServe()
+	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Fatalf("Failed to listen on address %s: %v", *addr, err)
 	}
+	log.Printf("Listening on %s", listener.Addr())
+
+	go func() {
+		log.Printf("Starting server on %s", listener.Addr())
+		err = server.Serve(listener)
+		if err != nil {
+			if err != http.ErrServerClosed {
+				log.Fatalf("Failed to serve: %v", err)
+			}
+		}
+	}()
+
+	<-sigs
+	log.Println("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	defer cancel()
+	err = server.Shutdown(ctx)
+	if err != nil {
+		log.Printf("Failed to shutdown server: %v", err)
+	}
+	log.Println("Server shut down successfully")
 }
