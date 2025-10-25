@@ -31,6 +31,7 @@ type NodeRegistrationAgent struct {
 	closeMutex     sync.Mutex
 	closeCh        chan struct{}
 	NodeAttributes pkgconnreg.ConnectionAttributes
+	LogEchoReplies bool
 }
 
 func (agent *NodeRegistrationAgent) Init() error {
@@ -92,7 +93,9 @@ func (agent *NodeRegistrationAgent) runReceiver(c *websocket.Conn) error {
 				payload.Echo.Direction == pkgconnreg.EchoDirectionS2C {
 
 				rtt, onTrip, backTrip := payload.Echo.CalculateDelays(time.Now())
-				log.Printf("Received echo reply: Seq: %d, RTT: %d ms, On-trip: %d ms, Back-trip: %d ms", payload.Echo.SeqID, rtt.Milliseconds(), onTrip.Milliseconds(), backTrip.Milliseconds())
+				if agent.LogEchoReplies {
+					log.Printf("Received echo reply: Seq: %d, RTT: %d ms, On-trip: %d ms, Back-trip: %d ms", payload.Echo.SeqID, rtt.Milliseconds(), onTrip.Milliseconds(), backTrip.Milliseconds())
+				}
 			}
 
 		default:
