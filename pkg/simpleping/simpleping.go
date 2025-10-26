@@ -1,6 +1,7 @@
 package simpleping
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -131,7 +132,7 @@ func NewSimplePinger(cfg *PingConfiguration) *SimplePinger {
 	}
 }
 
-func (p *SimplePinger) Ping() <-chan pkgpinger.PingEvent {
+func (p *SimplePinger) Ping(ctx context.Context) <-chan pkgpinger.PingEvent {
 	return startPinging(&p.cfg)
 }
 

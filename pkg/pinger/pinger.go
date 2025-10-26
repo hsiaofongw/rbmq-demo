@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"sync"
@@ -12,12 +13,18 @@ const (
 	PingEventTypePktRecv    PingEventType = "pkt_recv"
 	PingEventTypePktDupRecv PingEventType = "pkt_dup_recv"
 	PingEventTypePingStats  PingEventType = "ping_stats"
+	PingEventTypeError      PingEventType = "error"
 )
 
 type PingEvent struct {
-	Type PingEventType `json:"type"`
-	Data interface{}   `json:"data"`
+	Type     PingEventType     `json:"type"`
+	Data     interface{}       `json:"data,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+	Error    error             `json:"error,omitempty"`
 }
+
+const MetadataRabbitMQRoutingKey = "rabbitmq_routing_key"
+const MetadataKeyFrom = "from"
 
 func (ev *PingEvent) String() string {
 	j, err := json.Marshal(ev)
@@ -31,10 +38,10 @@ func (ev *PingEvent) String() string {
 type Pinger interface {
 	// the Ping action of a Pinger is guaranted to return (it has its own timeout mechanism),
 	// so the caller does not need to define the timeout timer in outer scope.
-	Ping() <-chan PingEvent
+	Ping(ctx context.Context) <-chan PingEvent
 }
 
-func StartMultiplePings(pingers []Pinger) <-chan PingEvent {
+func StartMultiplePings(ctx context.Context, pingers []Pinger) <-chan PingEvent {
 	// Create the output channel
 	eventCh := make(chan PingEvent)
 
@@ -57,7 +64,7 @@ func StartMultiplePings(pingers []Pinger) <-chan PingEvent {
 				defer wg.Done()
 
 				// Get the event channel for this pinger
-				pingCh := pinger.Ping()
+				pingCh := pinger.Ping(ctx)
 
 				// Forward all events from this pinger to the output channel
 				for ev := range pingCh {

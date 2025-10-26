@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -67,7 +68,7 @@ func main() {
 		pingers = append(pingers, pkgsimpleping.NewSimplePinger(&cfg))
 	}
 
-	eventCh := pkgpinger.StartMultiplePings(pingers)
+	eventCh := pkgpinger.StartMultiplePings(context.Background(), pingers)
 
 	for ev := range eventCh {
 		fmt.Println(ev.String())

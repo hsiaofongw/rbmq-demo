@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -96,7 +97,7 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	// Start multiple pings in parallel
-	eventCh := pkgpinger.StartMultiplePings(pingers)
+	eventCh := pkgpinger.StartMultiplePings(context.Background(), pingers)
 
 	// Stream events as line-delimited JSON
 	encoder := json.NewEncoder(w)
