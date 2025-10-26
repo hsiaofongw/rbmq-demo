@@ -18,8 +18,16 @@ func NewPingTaskHandler() *PingTaskHandler {
 }
 
 type PingTaskApplicationForm struct {
-	Targets []string `json:"targets"`
+	From       []string `json:"from,omitempty"`
+	Targets    []string `json:"targets"`
+	IntervalMs *uint64  `json:"interval,omitempty"`
+	Count      *uint64  `json:"count,omitempty"`
+	TimeoutMs  *uint64  `json:"timeout,omitempty"`
 }
+
+const defaultIntervalMs = 1000
+const defaultCount = 3
+const defaultTimeoutMs = 10 * 1000
 
 func respondError(w http.ResponseWriter, err error, status int) {
 	w.WriteHeader(status)
@@ -52,17 +60,39 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		respondError(w, fmt.Errorf("no targets specified"), http.StatusBadRequest)
 		return
 	}
+	// use simple ping
+	var count int = defaultCount
+	var timeout time.Duration = defaultTimeoutMs * time.Millisecond
+	var interval time.Duration = defaultIntervalMs * time.Millisecond
+	if form.Count != nil && *form.Count > 0 {
+		count = int(*form.Count)
+	}
+	if form.TimeoutMs != nil && *form.TimeoutMs > 0 {
+		timeout = time.Duration(*form.TimeoutMs) * time.Millisecond
+	}
+	if form.IntervalMs != nil && *form.IntervalMs > 0 {
+		interval = time.Duration(*form.IntervalMs) * time.Millisecond
+	}
 
-	// Create pingers for all targets
-	pingers := make([]pkgpinger.Pinger, 0, len(form.Targets))
-	for _, target := range form.Targets {
-		cfg := &pkgsimpleping.PingConfiguration{
-			Destination: target,
-			Count:       3,
-			Timeout:     10 * time.Second,
-			Interval:    1 * time.Second,
+	var pingers []pkgpinger.Pinger = nil
+
+	if form.From == nil {
+		// Create pingers for all targets
+		pingers = make([]pkgpinger.Pinger, 0, len(form.Targets))
+		for _, target := range form.Targets {
+			cfg := &pkgsimpleping.PingConfiguration{
+				Destination: target,
+				Count:       count,
+				Timeout:     timeout,
+				Interval:    interval,
+			}
+			pingers = append(pingers, pkgsimpleping.NewSimplePinger(cfg))
 		}
-		pingers = append(pingers, pkgsimpleping.NewSimplePinger(cfg))
+
+	} else {
+		// otherwise, use RabbitMQ distributed pings
+		respondError(w, fmt.Errorf("not implemented"), http.StatusNotImplemented)
+		return
 	}
 
 	// Start multiple pings in parallel

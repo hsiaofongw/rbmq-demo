@@ -115,10 +115,10 @@ func (statsrepr *PingStatsRepresentation) String() string {
 }
 
 type PingConfiguration struct {
-	Destination string
-	Count       int
-	Timeout     time.Duration
-	Interval    time.Duration
+	Destination string        `json:"destination"`
+	Count       int           `json:"count"`
+	Timeout     time.Duration `json:"timeout"`
+	Interval    time.Duration `json:"interval"`
 }
 
 type SimplePinger struct {
