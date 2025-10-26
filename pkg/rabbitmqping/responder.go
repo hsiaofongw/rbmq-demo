@@ -41,23 +41,6 @@ func (rbmqResponder *RabbitMQResponder) GetQueueNameWithContext(ctx context.Cont
 	}
 }
 
-func (rbmqResponder *RabbitMQResponder) GetQueueName() <-chan string {
-	if !rbmqResponder.initalized {
-		panic("RabbitMQResponder not initialized")
-	}
-
-	queueNameCh := make(chan string)
-
-	go func() {
-		defer close(queueNameCh)
-		queueName := <-rbmqResponder.queueName
-		queueNameCh <- queueName
-
-	}()
-
-	return queueNameCh
-}
-
 func (rbmqResponder *RabbitMQResponder) setQueueName(queueName string) {
 	if !rbmqResponder.initalized {
 		panic("RabbitMQResponder not initialized")

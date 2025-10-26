@@ -34,13 +34,6 @@ func main() {
 	log.Println("Starting RabbitMQ responder...")
 	rabbitMQErrCh := rbmqResponder.ServeRPC(context.Background())
 
-	agent := pkgnodereg.NodeRegistrationAgent{
-		ServerAddress:  *addr,
-		WebSocketPath:  *path,
-		NodeName:       *nodeName,
-		LogEchoReplies: *logEchoReplies,
-	}
-
 	attributes := make(pkgconnreg.ConnectionAttributes)
 	attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
 
@@ -57,6 +50,12 @@ func main() {
 	log.Println("QueueName to advertise will be:", queueName)
 
 	attributes[pkgnodereg.AttributeKeyRabbitMQQueueName] = queueName
+	agent := pkgnodereg.NodeRegistrationAgent{
+		ServerAddress:  *addr,
+		WebSocketPath:  *path,
+		NodeName:       *nodeName,
+		LogEchoReplies: *logEchoReplies,
+	}
 	agent.NodeAttributes = attributes
 	log.Println("Node attributes will be announced as:", attributes)
 
