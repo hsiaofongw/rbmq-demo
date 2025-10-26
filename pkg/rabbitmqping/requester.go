@@ -98,8 +98,12 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		ctx, cancel := context.WithTimeout(ctx, rbmqPinger.PingCfg.Timeout)
 		defer cancel()
 
+		msgId := uuid.New().String()
+
+		exchgName := ""
+
 		err = ch.PublishWithContext(ctx,
-			"",                    // exchange
+			exchgName,             // exchange
 			rbmqPinger.RoutingKey, // routing key
 			false,                 // mandatory
 			false,                 // immediate
@@ -108,8 +112,11 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 				CorrelationId: corrId,
 				ReplyTo:       q.Name,
 				Body:          msgBody,
+				MessageId:     msgId,
 			},
 		)
+
+		log.Println("Published a message", "exchg", exchgName, "routing_key", rbmqPinger.RoutingKey, "correlation_id", corrId, "message_id", msgId, "reply_to", q.Name)
 
 		if err != nil {
 			respondWithError(fmt.Errorf("failed to publish the message to the RabbitMQ exchange: %w", err))
@@ -117,6 +124,7 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		}
 
 		for msg := range msgs {
+			log.Println("Received a message", "exchg", msg.Exchange, "routing_key", msg.RoutingKey, "correlation_id", msg.CorrelationId, "message_id", msg.MessageId)
 			if msg.CorrelationId == corrId {
 				var pingEvent pkgpinger.PingEvent
 				err := json.Unmarshal(msg.Body, &pingEvent)

@@ -3,12 +3,11 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
-
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
@@ -26,6 +25,15 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
+	rbmqResponder := pkgrabbitmqping.RabbitMQResponder{
+		URL: *rabbitMQBrokerURL,
+	}
+	log.Println("Initializing RabbitMQ responder...")
+	rbmqResponder.Init()
+
+	log.Println("Starting RabbitMQ responder...")
+	rabbitMQErrCh := rbmqResponder.ServeRPC(context.Background())
+
 	agent := pkgnodereg.NodeRegistrationAgent{
 		ServerAddress:  *addr,
 		WebSocketPath:  *path,
@@ -35,29 +43,34 @@ func main() {
 
 	attributes := make(pkgconnreg.ConnectionAttributes)
 	attributes[pkgnodereg.AttributeKeyPingCapability] = "true"
+
+	log.Println("NodeName to advertise is:", *nodeName)
 	attributes[pkgnodereg.AttributeKeyNodeName] = *nodeName
 
-	queueName := fmt.Sprintf("ping.%s", *nodeName)
+	log.Println("Waiting for queue name to be generated...")
+	queueNameTimeoutCtx, canceller := context.WithTimeout(context.Background(), 10*time.Second)
+	queueName, err := rbmqResponder.GetQueueNameWithContext(queueNameTimeoutCtx)
+	if err != nil {
+		log.Fatalf("Failed to get queue name: %v", err)
+	}
+	canceller()
+	log.Println("QueueName to advertise will be:", queueName)
+
 	attributes[pkgnodereg.AttributeKeyRabbitMQQueueName] = queueName
 	agent.NodeAttributes = attributes
+	log.Println("Node attributes will be announced as:", attributes)
 
-	rbmqResponder := pkgrabbitmqping.RabbitMQResponder{
-		URL:       *rabbitMQBrokerURL,
-		QueueName: queueName,
-	}
-
-	rabbitMQErrCh := rbmqResponder.ServeRPC(context.Background())
-
-	var err error
+	log.Println("Initializing node registration agent...")
 	if err = agent.Init(); err != nil {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
 
+	log.Println("Starting node registration agent...")
 	nodeRegAgentErrCh := agent.Run()
 
 	<-sigs
 
-	log.Println("Shutting down pinger...")
+	log.Println("Shutting down ping responder...")
 	err = rbmqResponder.Shutdown()
 	if err != nil {
 		log.Fatalf("Failed to shutdown RabbitMQ responder: %v", err)
