@@ -117,7 +117,15 @@ func (agent *NodeRegistrationAgent) sendMessage(c *websocket.Conn, msg interface
 }
 
 // Connect and start the loop
-func (agent *NodeRegistrationAgent) Run() error {
+func (agent *NodeRegistrationAgent) Run() chan error {
+	errCh := make(chan error)
+	go func() {
+		errCh <- agent.doRun()
+	}()
+	return errCh
+}
+
+func (agent *NodeRegistrationAgent) doRun() error {
 	if !agent.intialized {
 		return fmt.Errorf("agent not initialized")
 	}

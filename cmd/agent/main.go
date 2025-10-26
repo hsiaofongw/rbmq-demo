@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"encoding/json"
 	"os"
@@ -170,10 +171,7 @@ func main() {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
 
-	errCh := make(chan error)
-	go func() {
-		errCh <- agent.Run()
-	}()
+	errCh := agent.Run()
 
 	destination := "8.8.8.8"
 	pinger, err := probing.NewPinger(destination)
@@ -181,8 +179,9 @@ func main() {
 		log.Fatalf("Failed to create pinger: %v", err)
 	}
 
-	var counter *int = new(int)
-	*counter = 0
+	pinger.Count = 3
+	pinger.Timeout = 10 * time.Second
+	pinger.Interval = 1 * time.Second
 
 	pinger.OnRecv = func(pkt *probing.Packet) {
 		ev := PingEvent{
@@ -190,11 +189,6 @@ func main() {
 			Data: NewPktRepresentation(pkt, false),
 		}
 		fmt.Println(ev.String())
-		*counter = *counter + 1
-		if *counter > 3 {
-			log.Println("Stopping pinger after 10 packets")
-			pinger.Stop()
-		}
 	}
 	pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
 		ev := PingEvent{
@@ -211,11 +205,15 @@ func main() {
 		fmt.Println(ev.String())
 	}
 
-	pinger.SetPrivileged(true)
-	err = pinger.Run()
-	if err != nil {
-		log.Fatalf("Failed to run pinger: %v", err)
-	}
+	go func() {
+		pinger.SetPrivileged(true)
+		err = pinger.Run()
+		if err != nil {
+			log.Fatalf("Failed to run pinger: %v", err)
+		}
+
+		log.Println("Pinging finished")
+	}()
 
 	<-sigs
 
