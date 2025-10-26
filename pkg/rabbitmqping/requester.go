@@ -30,28 +30,29 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		pkgpinger.MetadataKeyFrom:            rbmqPinger.From,
 	}
 
+	respondWithError := func(err error) {
+		log.Println("RabbitMQPinger error:", err)
+		ev := pkgpinger.PingEvent{
+			Type:     pkgpinger.PingEventTypeError,
+			Error:    err,
+			Metadata: metadata,
+		}
+		evChan <- ev
+	}
+
 	go func() {
 		defer close(evChan)
 
 		conn, err := pkgctx.GetRabbitMQConnection(ctx)
 		if err != nil {
-			ev := pkgpinger.PingEvent{
-				Type:     pkgpinger.PingEventTypeError,
-				Error:    fmt.Errorf("failed to obtain a RabbitMQ connection within RabbitMQPinger: %w", err),
-				Metadata: metadata,
-			}
-			evChan <- ev
+			respondWithError(fmt.Errorf("failed to obtain a RabbitMQ connection within RabbitMQPinger: %w", err))
 			return
 		}
 
 		ch, err := conn.Channel()
 		if err != nil {
-			ev := pkgpinger.PingEvent{
-				Type:     pkgpinger.PingEventTypeError,
-				Error:    fmt.Errorf("failed to open a RabbitMQ channel within RabbitMQPinger: %w", err),
-				Metadata: metadata,
-			}
-			evChan <- ev
+			respondWithError(fmt.Errorf("failed to open a RabbitMQ channel within RabbitMQPinger: %w", err))
+			return
 		}
 		defer ch.Close()
 
@@ -65,12 +66,7 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 			nil,   // arguments
 		)
 		if err != nil {
-			ev := pkgpinger.PingEvent{
-				Type:     pkgpinger.PingEventTypeError,
-				Error:    fmt.Errorf("failed to declare a RabbitMQ queue within RabbitMQPinger: %w", err),
-				Metadata: metadata,
-			}
-			evChan <- ev
+			respondWithError(fmt.Errorf("failed to declare a RabbitMQ queue within RabbitMQPinger: %w", err))
 			return
 		}
 		defer ch.QueueDelete(q.Name, false, false, false)
@@ -87,23 +83,13 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		)
 
 		if err != nil {
-			ev := pkgpinger.PingEvent{
-				Type:     pkgpinger.PingEventTypeError,
-				Error:    fmt.Errorf("failed to register a consumer within RabbitMQPinger: %w", err),
-				Metadata: metadata,
-			}
-			evChan <- ev
+			respondWithError(fmt.Errorf("failed to register a consumer within RabbitMQPinger: %w", err))
 			return
 		}
 
 		msgBody, err := json.Marshal(rbmqPinger.PingCfg)
 		if err != nil {
-			ev := pkgpinger.PingEvent{
-				Type:     pkgpinger.PingEventTypeError,
-				Error:    fmt.Errorf("failed to marshal the ping configuration within RabbitMQPinger: %w", err),
-				Metadata: metadata,
-			}
-			evChan <- ev
+			respondWithError(fmt.Errorf("failed to marshal the ping configuration within RabbitMQPinger: %w", err))
 			return
 		}
 
@@ -126,13 +112,7 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		)
 
 		if err != nil {
-			log.Println("Failed to publish the message to the RabbitMQ exchange:", err)
-			ev := pkgpinger.PingEvent{
-				Type:     pkgpinger.PingEventTypeError,
-				Error:    fmt.Errorf("failed to publish the message to the RabbitMQ exchange: %w", err),
-				Metadata: metadata,
-			}
-			evChan <- ev
+			respondWithError(fmt.Errorf("failed to publish the message to the RabbitMQ exchange: %w", err))
 			return
 		}
 
@@ -141,7 +121,8 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 				var pingEvent pkgpinger.PingEvent
 				err := json.Unmarshal(msg.Body, &pingEvent)
 				if err != nil {
-					log.Println("Failed to unmarshal the message:", string(msg.Body), "error:", err)
+					respondWithError(fmt.Errorf("failed to unmarshal the message: %w", err))
+					continue
 				}
 				pingEvent.Metadata = metadata
 				evChan <- pingEvent

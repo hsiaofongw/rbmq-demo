@@ -120,12 +120,11 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		interval = time.Duration(*form.IntervalMs) * time.Millisecond
 	}
 
-	var pingers []pkgpinger.Pinger = nil
+	pingers := make([]pkgpinger.Pinger, 0)
 	ctx := context.Background()
 
 	if form.From == nil {
 		// Create pingers for all targets
-		pingers = make([]pkgpinger.Pinger, 0)
 		for _, target := range form.Targets {
 			cfg := &pkgsimpleping.PingConfiguration{
 				Destination: target,
@@ -136,16 +135,7 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			pingers = append(pingers, pkgsimpleping.NewSimplePinger(cfg))
 		}
 	} else {
-		ch, err := handler.RabbitMQConnection.Channel()
-		if err != nil {
-			respondError(w, fmt.Errorf("failed to open a RabbitMQ channel to broker: %w", err), http.StatusInternalServerError)
-			return
-		}
-		defer ch.Close()
-
-		ctx = pkgctx.WithRabbitMQChannel(ctx, ch)
-
-		pingers = make([]pkgpinger.Pinger, 0)
+		ctx = pkgctx.WithRabbitMQConnection(ctx, handler.RabbitMQConnection)
 		for _, from := range form.From {
 			for _, target := range form.Targets {
 				routingKey := getRoutingKey(handler.ConnRegistry, from)
@@ -153,6 +143,8 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 					// the node might be currently offline, skip it for now
 					continue
 				}
+
+				log.Printf("Sending ping to %s via RabbitMQ routing key %s", target, *routingKey)
 
 				rabbitmqPinger := pkgrabbitmqping.RabbitMQPinger{
 					From:       from,
@@ -167,6 +159,11 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 				pingers = append(pingers, &rabbitmqPinger)
 			}
 		}
+	}
+
+	if len(pingers) == 0 {
+		respondError(w, fmt.Errorf("no pingers to start"), http.StatusInternalServerError)
+		return
 	}
 
 	// Start multiple pings in parallel

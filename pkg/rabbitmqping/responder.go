@@ -98,7 +98,7 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 						log.Println("Failed to marshal the event:", ev, "error:", err)
 						continue
 					}
-					log.Println("Ping event:", string(evJson))
+					log.Println("Ping event from broker:", string(evJson))
 
 					err = ch.PublishWithContext(ctx,
 						"",          // exchange
