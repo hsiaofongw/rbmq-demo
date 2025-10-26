@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"encoding/json"
@@ -223,12 +224,15 @@ func startMultiplePingings(cfgs []PingConfiguration) <-chan PingEvent {
 			return
 		}
 
-		// Use a channel to signal when a pinger is done
-		done := make(chan bool, len(cfgs))
+		// Use WaitGroup to wait for all pingers to complete
+		var wg sync.WaitGroup
 
 		// Start all pingers
 		for _, cfg := range cfgs {
+			wg.Add(1)
 			go func(cfg PingConfiguration) {
+				defer wg.Done()
+
 				// Get the event channel for this pinger
 				pingCh := startPinging(&cfg)
 
@@ -236,16 +240,11 @@ func startMultiplePingings(cfgs []PingConfiguration) <-chan PingEvent {
 				for ev := range pingCh {
 					eventCh <- ev
 				}
-
-				// Signal this pinger is done
-				done <- true
 			}(cfg)
 		}
 
 		// Wait for all pingers to complete
-		for i := 0; i < len(cfgs); i++ {
-			<-done
-		}
+		wg.Wait()
 	}()
 
 	return eventCh
