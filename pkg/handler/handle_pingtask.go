@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -20,6 +21,20 @@ type PingTaskApplicationForm struct {
 	Targets []string `json:"targets"`
 }
 
+func respondError(w http.ResponseWriter, err error, status int) {
+	w.WriteHeader(status)
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+	respbytes, err := json.Marshal(errorResponse{Error: err.Error()})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Error(w, string(respbytes), status)
+}
+
 func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Set headers for streaming response
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -29,12 +44,12 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	// Parse the request body
 	var form PingTaskApplicationForm
 	if err := json.NewDecoder(r.Body).Decode(&form); err != nil {
-		http.Error(w, "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		respondError(w, fmt.Errorf("failed to parse request body: %w", err), http.StatusBadRequest)
 		return
 	}
 
 	if len(form.Targets) == 0 {
-		http.Error(w, "No targets specified", http.StatusBadRequest)
+		respondError(w, fmt.Errorf("no targets specified"), http.StatusBadRequest)
 		return
 	}
 
@@ -58,6 +73,7 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	for ev := range eventCh {
 		if err := encoder.Encode(ev); err != nil {
 			log.Printf("Failed to encode event: %v", err)
+			respondError(w, fmt.Errorf("failed to encode event: %w", err), http.StatusInternalServerError)
 			return
 		}
 		// Flush the response to send immediately

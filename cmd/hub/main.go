@@ -36,10 +36,12 @@ func main() {
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
 	connsHandler := pkghandler.NewConnsHandler(cr)
+	pingTaskHandler := pkghandler.NewPingTaskHandler()
 
 	muxer := http.NewServeMux()
 	muxer.Handle("/ws", wsHandler)
 	muxer.Handle("/conns", connsHandler)
+	muxer.Handle("/ping-task", pingTaskHandler)
 
 	server := http.Server{
 		Handler: muxer,
