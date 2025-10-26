@@ -147,9 +147,18 @@ func (ev *PingEvent) String() string {
 	return string(j)
 }
 
+type PingConfiguration struct {
+	Destination string
+	Count       int
+	Timeout     time.Duration
+	Interval    time.Duration
+}
+
 // startPinging starts pinging the given destination and returns a channel
 // that will receive all ping events
-func startPinging(destination string) <-chan PingEvent {
+func startPinging(cfg *PingConfiguration) <-chan PingEvent {
+	destination := cfg.Destination
+
 	eventCh := make(chan PingEvent)
 
 	go func() {
@@ -161,9 +170,9 @@ func startPinging(destination string) <-chan PingEvent {
 			return
 		}
 
-		pinger.Count = 3
-		pinger.Timeout = 10 * time.Second
-		pinger.Interval = 1 * time.Second
+		pinger.Count = cfg.Count
+		pinger.Timeout = cfg.Timeout
+		pinger.Interval = cfg.Interval
 
 		pinger.OnRecv = func(pkt *probing.Packet) {
 			ev := PingEvent{
@@ -201,6 +210,47 @@ func startPinging(destination string) <-chan PingEvent {
 	return eventCh
 }
 
+func startMultiplePingings(cfgs []PingConfiguration) <-chan PingEvent {
+	// Create the output channel
+	eventCh := make(chan PingEvent)
+
+	// Start a goroutine that manages all the pinger goroutines
+	go func() {
+		defer close(eventCh)
+
+		// If no configurations, just return
+		if len(cfgs) == 0 {
+			return
+		}
+
+		// Use a channel to signal when a pinger is done
+		done := make(chan bool, len(cfgs))
+
+		// Start all pingers
+		for _, cfg := range cfgs {
+			go func(cfg PingConfiguration) {
+				// Get the event channel for this pinger
+				pingCh := startPinging(&cfg)
+
+				// Forward all events from this pinger to the output channel
+				for ev := range pingCh {
+					eventCh <- ev
+				}
+
+				// Signal this pinger is done
+				done <- true
+			}(cfg)
+		}
+
+		// Wait for all pingers to complete
+		for i := 0; i < len(cfgs); i++ {
+			<-done
+		}
+	}()
+
+	return eventCh
+}
+
 func main() {
 	flag.Parse()
 	sigs := make(chan os.Signal, 1)
@@ -228,8 +278,22 @@ func main() {
 
 	errCh := agent.Run()
 
-	destination := "8.8.8.8"
-	eventCh := startPinging(destination)
+	pingCfgs := []PingConfiguration{
+		{
+			Destination: "8.8.8.8",
+			Count:       3,
+			Timeout:     10 * time.Second,
+			Interval:    1 * time.Second,
+		},
+		{
+			Destination: "1.1.1.1",
+			Count:       3,
+			Timeout:     10 * time.Second,
+			Interval:    1 * time.Second,
+		},
+	}
+
+	eventCh := startMultiplePingings(pingCfgs)
 
 	for ev := range eventCh {
 		fmt.Println(ev.String())
