@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	AttributeKeyNodeName          = "NodeName"
 	AttributeKeyPingCapability    = "CapabilityPing"
 	AttributeKeyRabbitMQQueueName = "RabbitMQQueueName"
 )

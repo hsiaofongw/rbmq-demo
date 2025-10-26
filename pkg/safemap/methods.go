@@ -156,6 +156,32 @@ func (sm *SafeMap) Dump(cloner func(value interface{}) interface{}) map[string]i
 	return <-respCh
 }
 
+func (sm *SafeMap) Walk(walkFunc WalkFunc) error {
+	respCh := make(chan error)
+
+	req := func() {
+		if sm.closed {
+			respCh <- ErrMapClosed
+			return
+		}
+
+		for k, v := range sm.store {
+			keepgoing, err := walkFunc(k, v)
+			if err != nil {
+				respCh <- err
+				return
+			}
+			if !keepgoing {
+				break
+			}
+		}
+		respCh <- nil
+	}
+
+	sm.requestsCh <- req
+	return <-respCh
+}
+
 // Close shuts down the SafeMap's actor goroutine.
 // Any subsequent attempts to use the map will fail. It is safe to call Close multiple times.
 func (sm *SafeMap) Close() {

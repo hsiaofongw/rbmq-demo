@@ -113,3 +113,8 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 
 	return errChan
 }
+
+func (rbmqResponder *RabbitMQResponder) Shutdown() error {
+	// todo: implement
+	return nil
+}

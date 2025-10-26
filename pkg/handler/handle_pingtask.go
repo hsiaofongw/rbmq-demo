@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"time"
 
+	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgctx "example.com/rbmq-demo/pkg/ctx"
+	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
 	pkgrabbitmqping "example.com/rbmq-demo/pkg/rabbitmqping"
 	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
@@ -17,6 +19,7 @@ import (
 
 type PingTaskHandler struct {
 	RabbitMQConnection *amqp.Connection
+	ConnRegistry       *pkgconnreg.ConnRegistry
 }
 
 func NewPingTaskHandler(ctx context.Context) (*PingTaskHandler, error) {
@@ -41,6 +44,36 @@ type PingTaskApplicationForm struct {
 const defaultIntervalMs = 1000
 const defaultCount = 3
 const defaultTimeoutMs = 10 * 1000
+
+func getRoutingKey(connRegistry *pkgconnreg.ConnRegistry, from string) *string {
+	if connRegistry == nil {
+		k := from
+		return &k
+	}
+
+	regData, err := connRegistry.SearchByAttributes(pkgconnreg.ConnectionAttributes{
+		pkgnodereg.AttributeKeyPingCapability: "true",
+		pkgnodereg.AttributeKeyNodeName:       from,
+	})
+	if err != nil {
+		log.Printf("Failed to search by attributes: %v", err)
+		return nil
+	}
+
+	if regData == nil {
+		// didn't found
+		return nil
+	}
+
+	routingKey, ok := regData.Attributes[pkgnodereg.AttributeKeyRabbitMQQueueName]
+	if ok {
+		return &routingKey
+	}
+
+	f := from
+
+	return &f
+}
 
 func respondError(w http.ResponseWriter, err error, status int) {
 	w.WriteHeader(status)
@@ -115,10 +148,15 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		pingers = make([]pkgpinger.Pinger, 0)
 		for _, from := range form.From {
 			for _, target := range form.Targets {
-				// todo: get routing key from node discovery agent, if routing key is not found, skip
+				routingKey := getRoutingKey(handler.ConnRegistry, from)
+				if routingKey == nil {
+					// the node might be currently offline, skip it for now
+					continue
+				}
+
 				rabbitmqPinger := pkgrabbitmqping.RabbitMQPinger{
 					From:       from,
-					RoutingKey: from,
+					RoutingKey: *routingKey,
 					PingCfg: pkgsimpleping.PingConfiguration{
 						Destination: target,
 						Count:       count,

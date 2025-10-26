@@ -172,3 +172,38 @@ func NewConnRegistry(datastore pkgsafemap.DataStore) *ConnRegistry {
 	}
 	return connReg
 }
+
+// If all matches, return true, otherwise return false
+func (regData *ConnRegistryData) TestAgainstAttributes(expected ConnectionAttributes) (allMatch bool) {
+	allMatch = true
+	for k, v := range expected {
+		actual, ok := regData.Attributes[k]
+		if !ok {
+			allMatch = false
+			break
+		}
+		if actual != v {
+			allMatch = false
+			break
+		}
+	}
+	return allMatch
+}
+
+func (cr *ConnRegistry) SearchByAttributes(expected ConnectionAttributes) (data *ConnRegistryData, err error) {
+	err = cr.datastore.Walk(func(key string, value interface{}) (keepgoing bool, err error) {
+		entry, ok := value.(*ConnRegistryData)
+		if !ok {
+			return false, fmt.Errorf("failed to convert value to *ConnRegistryData")
+		}
+
+		keepgoing = !entry.TestAgainstAttributes(expected)
+		if !keepgoing {
+			data = cloneConnRegistryData(entry).(*ConnRegistryData)
+		}
+
+		return keepgoing, nil
+	})
+
+	return data, err
+}

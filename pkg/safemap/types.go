@@ -2,12 +2,15 @@ package safemap
 
 import "sync"
 
+type WalkFunc func(key string, value interface{}) (keepgoing bool, err error)
+
 type DataStore interface {
 	Get(key string, op func(value interface{}) error) (err error, found bool)
 	Set(key string, value interface{})
 	Delete(key string)
 	Len() int
 	Dump(cloner func(value interface{}) interface{}) map[string]interface{}
+	Walk(walkFunc WalkFunc) error
 }
 
 type SafeMap struct {
