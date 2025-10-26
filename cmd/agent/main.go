@@ -147,6 +147,60 @@ func (ev *PingEvent) String() string {
 	return string(j)
 }
 
+// startPinging starts pinging the given destination and returns a channel
+// that will receive all ping events
+func startPinging(destination string) <-chan PingEvent {
+	eventCh := make(chan PingEvent)
+
+	go func() {
+		defer close(eventCh)
+
+		pinger, err := probing.NewPinger(destination)
+		if err != nil {
+			log.Printf("Failed to create pinger: %v", err)
+			return
+		}
+
+		pinger.Count = 3
+		pinger.Timeout = 10 * time.Second
+		pinger.Interval = 1 * time.Second
+
+		pinger.OnRecv = func(pkt *probing.Packet) {
+			ev := PingEvent{
+				Type: PingEventTypePktRecv,
+				Data: NewPktRepresentation(pkt, false),
+			}
+			eventCh <- ev
+		}
+
+		pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
+			ev := PingEvent{
+				Type: PingEventTypePktDupRecv,
+				Data: NewPktRepresentation(pkt, true),
+			}
+			eventCh <- ev
+		}
+
+		pinger.OnFinish = func(stats *probing.Statistics) {
+			ev := PingEvent{
+				Type: PingEventTypePingStats,
+				Data: NewPingStatsRepresentation(stats),
+			}
+			eventCh <- ev
+		}
+
+		pinger.SetPrivileged(true)
+		err = pinger.Run()
+		if err != nil {
+			log.Printf("Failed to run pinger: %v", err)
+		}
+
+		log.Println("Pinging finished")
+	}()
+
+	return eventCh
+}
+
 func main() {
 	flag.Parse()
 	sigs := make(chan os.Signal, 1)
@@ -167,58 +221,25 @@ func main() {
 
 	agent.NodeAttributes = attributes
 
-	if err := agent.Init(); err != nil {
+	var err error
+	if err = agent.Init(); err != nil {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
 
 	errCh := agent.Run()
 
 	destination := "8.8.8.8"
-	pinger, err := probing.NewPinger(destination)
-	if err != nil {
-		log.Fatalf("Failed to create pinger: %v", err)
-	}
+	eventCh := startPinging(destination)
 
-	pinger.Count = 3
-	pinger.Timeout = 10 * time.Second
-	pinger.Interval = 1 * time.Second
-
-	pinger.OnRecv = func(pkt *probing.Packet) {
-		ev := PingEvent{
-			Type: PingEventTypePktRecv,
-			Data: NewPktRepresentation(pkt, false),
-		}
+	for ev := range eventCh {
 		fmt.Println(ev.String())
 	}
-	pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
-		ev := PingEvent{
-			Type: PingEventTypePktDupRecv,
-			Data: NewPktRepresentation(pkt, true),
-		}
-		fmt.Println(ev.String())
-	}
-	pinger.OnFinish = func(stats *probing.Statistics) {
-		ev := PingEvent{
-			Type: PingEventTypePingStats,
-			Data: NewPingStatsRepresentation(stats),
-		}
-		fmt.Println(ev.String())
-	}
-
-	go func() {
-		pinger.SetPrivileged(true)
-		err = pinger.Run()
-		if err != nil {
-			log.Fatalf("Failed to run pinger: %v", err)
-		}
-
-		log.Println("Pinging finished")
-	}()
 
 	<-sigs
 
 	log.Println("Shutting down pinger...")
-	pinger.Stop()
+	// The pinger is now run in a goroutine, so we don't need to stop it here
+	// directly. The channel will close when the pinger finishes.
 
 	log.Println("Shutting down agent...")
 	err = agent.Shutdown()
