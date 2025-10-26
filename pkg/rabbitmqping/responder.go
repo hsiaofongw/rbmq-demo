@@ -46,7 +46,7 @@ func (rbmqResponder *RabbitMQResponder) handleTask(ctx context.Context, taskMsg 
 		err := json.Unmarshal(taskMsg.Body, &pingCfg)
 		if err != nil {
 			updatesCh <- TaskUpdate{
-				Err:     fmt.Errorf("failed to unmarshal the message: %w, message_id %s, correlation_id, %s, reply_to %s", err, taskMsg.MessageId, taskMsg.CorrelationId, taskMsg.ReplyTo),
+				Err:     fmt.Errorf("failed to unmarshal the message: %w, message_id %s, correlation_id, %s", err, taskMsg.MessageId, taskMsg.CorrelationId),
 				TaskMsg: taskMsg,
 			}
 			return
@@ -55,17 +55,17 @@ func (rbmqResponder *RabbitMQResponder) handleTask(ctx context.Context, taskMsg 
 		log.Printf("Message %s corr_id %s is a PingConfiguration, destination %s", taskMsg.MessageId, taskMsg.CorrelationId, pingCfg.Destination)
 		pinger := pkgsimpleping.NewSimplePinger(&pingCfg)
 
-		log.Println("Starting to ping destination:", pingCfg.Destination, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId, "queue", taskMsg.ReplyTo)
+		log.Println("Starting to ping destination:", pingCfg.Destination, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
 		pingEvents := pinger.Ping(ctx)
 
 		log.Println("Retrieving ping events about destination:", pingCfg.Destination)
 		for ev := range pingEvents {
 			evJson, err := json.Marshal(ev)
 			if err != nil {
-				log.Println("Failed to marshal ping event:", ev, "error:", err, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId, "queue", taskMsg.ReplyTo)
+				log.Println("Failed to marshal ping event:", ev, "error:", err, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
 				continue
 			}
-			log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error)
+			log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
 			updatesCh <- TaskUpdate{
 				Envelope: &amqp.Publishing{
 					ContentType:   "application/json",
@@ -75,6 +75,7 @@ func (rbmqResponder *RabbitMQResponder) handleTask(ctx context.Context, taskMsg 
 				TaskMsg: taskMsg,
 			}
 		}
+		log.Println("Ping finished, sending final task update", "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId)
 		updatesCh <- TaskUpdate{
 			TaskMsg: taskMsg,
 		}
