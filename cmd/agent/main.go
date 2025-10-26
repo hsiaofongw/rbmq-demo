@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"encoding/json"
@@ -14,6 +13,7 @@ import (
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
 	pkgnodereg "example.com/rbmq-demo/pkg/nodereg"
+	pkgpinger "example.com/rbmq-demo/pkg/pinger"
 	probing "github.com/prometheus-community/pro-bing"
 )
 
@@ -126,28 +126,6 @@ func (statsrepr *PingStatsRepresentation) String() string {
 	return string(j)
 }
 
-type PingEventType string
-
-const (
-	PingEventTypePktRecv    PingEventType = "pkt_recv"
-	PingEventTypePktDupRecv PingEventType = "pkt_dup_recv"
-	PingEventTypePingStats  PingEventType = "ping_stats"
-)
-
-type PingEvent struct {
-	Type PingEventType `json:"type"`
-	Data interface{}   `json:"data"`
-}
-
-func (ev *PingEvent) String() string {
-	j, err := json.Marshal(ev)
-	if err != nil {
-		log.Printf("Failed to marshal event: %v", err)
-		return ""
-	}
-	return string(j)
-}
-
 type PingConfiguration struct {
 	Destination string
 	Count       int
@@ -155,12 +133,26 @@ type PingConfiguration struct {
 	Interval    time.Duration
 }
 
+type SimplePinger struct {
+	cfg PingConfiguration
+}
+
+func NewSimplePinger(cfg *PingConfiguration) *SimplePinger {
+	return &SimplePinger{
+		cfg: *cfg,
+	}
+}
+
+func (p *SimplePinger) Ping() <-chan pkgpinger.PingEvent {
+	return startPinging(&p.cfg)
+}
+
 // startPinging starts pinging the given destination and returns a channel
 // that will receive all ping events
-func startPinging(cfg *PingConfiguration) <-chan PingEvent {
+func startPinging(cfg *PingConfiguration) <-chan pkgpinger.PingEvent {
 	destination := cfg.Destination
 
-	eventCh := make(chan PingEvent)
+	eventCh := make(chan pkgpinger.PingEvent)
 
 	go func() {
 		defer close(eventCh)
@@ -176,24 +168,24 @@ func startPinging(cfg *PingConfiguration) <-chan PingEvent {
 		pinger.Interval = cfg.Interval
 
 		pinger.OnRecv = func(pkt *probing.Packet) {
-			ev := PingEvent{
-				Type: PingEventTypePktRecv,
+			ev := pkgpinger.PingEvent{
+				Type: pkgpinger.PingEventTypePktRecv,
 				Data: NewPktRepresentation(pkt, false),
 			}
 			eventCh <- ev
 		}
 
 		pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
-			ev := PingEvent{
-				Type: PingEventTypePktDupRecv,
+			ev := pkgpinger.PingEvent{
+				Type: pkgpinger.PingEventTypePktDupRecv,
 				Data: NewPktRepresentation(pkt, true),
 			}
 			eventCh <- ev
 		}
 
 		pinger.OnFinish = func(stats *probing.Statistics) {
-			ev := PingEvent{
-				Type: PingEventTypePingStats,
+			ev := pkgpinger.PingEvent{
+				Type: pkgpinger.PingEventTypePingStats,
 				Data: NewPingStatsRepresentation(stats),
 			}
 			eventCh <- ev
@@ -206,45 +198,6 @@ func startPinging(cfg *PingConfiguration) <-chan PingEvent {
 		}
 
 		log.Println("Pinging finished")
-	}()
-
-	return eventCh
-}
-
-func startMultiplePingings(cfgs []PingConfiguration) <-chan PingEvent {
-	// Create the output channel
-	eventCh := make(chan PingEvent)
-
-	// Start a goroutine that manages all the pinger goroutines
-	go func() {
-		defer close(eventCh)
-
-		// If no configurations, just return
-		if len(cfgs) == 0 {
-			return
-		}
-
-		// Use WaitGroup to wait for all pingers to complete
-		var wg sync.WaitGroup
-
-		// Start all pingers
-		for _, cfg := range cfgs {
-			wg.Add(1)
-			go func(cfg PingConfiguration) {
-				defer wg.Done()
-
-				// Get the event channel for this pinger
-				pingCh := startPinging(&cfg)
-
-				// Forward all events from this pinger to the output channel
-				for ev := range pingCh {
-					eventCh <- ev
-				}
-			}(cfg)
-		}
-
-		// Wait for all pingers to complete
-		wg.Wait()
 	}()
 
 	return eventCh
@@ -291,8 +244,12 @@ func main() {
 			Interval:    1 * time.Second,
 		},
 	}
+	pingers := make([]pkgpinger.Pinger, 0)
+	for _, cfg := range pingCfgs {
+		pingers = append(pingers, NewSimplePinger(&cfg))
+	}
 
-	eventCh := startMultiplePingings(pingCfgs)
+	eventCh := pkgpinger.StartMultiplePings(pingers)
 
 	for ev := range eventCh {
 		fmt.Println(ev.String())
