@@ -36,7 +36,7 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 		defer ch.Close()
 
 		q, err := ch.QueueDeclare(
-			rbmqResponder.QueueName, // queue name
+			rbmqResponder.QueueName, // queue name where to receive messages(tasks) from
 			false,                   // durable
 			false,                   // delete when unused
 			false,                   // exclusive

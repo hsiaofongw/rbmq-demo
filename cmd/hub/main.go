@@ -12,12 +12,15 @@ import (
 	"time"
 
 	pkgconnreg "example.com/rbmq-demo/pkg/connreg"
+	pkgctx "example.com/rbmq-demo/pkg/ctx"
 	pkghandler "example.com/rbmq-demo/pkg/handler"
 	pkgsafemap "example.com/rbmq-demo/pkg/safemap"
 	"github.com/gorilla/websocket"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
+var rabbitMQBrokerURL = flag.String("rabbitmq-broker-url", "amqp://localhost:5672/", "RabbitMQ broker URL")
 
 var upgrader = websocket.Upgrader{}
 
@@ -29,6 +32,21 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
+	ctx := context.Background()
+
+	conn, err := amqp.Dial(*rabbitMQBrokerURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
+	defer conn.Close()
+
+	ctx = pkgctx.WithRabbitMQConnection(ctx, conn)
+
+	pingTaskHandler, err := pkghandler.NewPingTaskHandler(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create ping task handler: %v", err)
+	}
+
 	sm := pkgsafemap.NewSafeMap()
 	defer sm.Close()
 
@@ -36,7 +54,6 @@ func main() {
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
 	connsHandler := pkghandler.NewConnsHandler(cr)
-	pingTaskHandler := pkghandler.NewPingTaskHandler()
 
 	muxer := http.NewServeMux()
 	muxer.Handle("/ws", wsHandler)

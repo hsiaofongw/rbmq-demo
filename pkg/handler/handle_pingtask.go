@@ -8,14 +8,26 @@ import (
 	"net/http"
 	"time"
 
+	pkgctx "example.com/rbmq-demo/pkg/ctx"
 	pkgpinger "example.com/rbmq-demo/pkg/pinger"
+	pkgrabbitmqping "example.com/rbmq-demo/pkg/rabbitmqping"
 	pkgsimpleping "example.com/rbmq-demo/pkg/simpleping"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type PingTaskHandler struct{}
+type PingTaskHandler struct {
+	RabbitMQConnection *amqp.Connection
+}
 
-func NewPingTaskHandler() *PingTaskHandler {
-	return &PingTaskHandler{}
+func NewPingTaskHandler(ctx context.Context) (*PingTaskHandler, error) {
+	rbmqConn, err := pkgctx.GetRabbitMQConnection(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get RabbitMQ connection: %w", err)
+	}
+
+	return &PingTaskHandler{
+		RabbitMQConnection: rbmqConn,
+	}, nil
 }
 
 type PingTaskApplicationForm struct {
@@ -76,10 +88,11 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	var pingers []pkgpinger.Pinger = nil
+	ctx := context.Background()
 
 	if form.From == nil {
 		// Create pingers for all targets
-		pingers = make([]pkgpinger.Pinger, 0, len(form.Targets))
+		pingers = make([]pkgpinger.Pinger, 0)
 		for _, target := range form.Targets {
 			cfg := &pkgsimpleping.PingConfiguration{
 				Destination: target,
@@ -89,15 +102,37 @@ func (handler *PingTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			}
 			pingers = append(pingers, pkgsimpleping.NewSimplePinger(cfg))
 		}
-
 	} else {
-		// otherwise, use RabbitMQ distributed pings
-		respondError(w, fmt.Errorf("not implemented"), http.StatusNotImplemented)
-		return
+		ch, err := handler.RabbitMQConnection.Channel()
+		if err != nil {
+			respondError(w, fmt.Errorf("failed to open a RabbitMQ channel to broker: %w", err), http.StatusInternalServerError)
+			return
+		}
+		defer ch.Close()
+
+		ctx = pkgctx.WithRabbitMQChannel(ctx, ch)
+
+		pingers = make([]pkgpinger.Pinger, 0)
+		for _, from := range form.From {
+			for _, target := range form.Targets {
+				// todo: get routing key from node discovery agent, if routing key is not found, skip
+				rabbitmqPinger := pkgrabbitmqping.RabbitMQPinger{
+					From:       from,
+					RoutingKey: from,
+					PingCfg: pkgsimpleping.PingConfiguration{
+						Destination: target,
+						Count:       count,
+						Timeout:     timeout,
+						Interval:    interval,
+					},
+				}
+				pingers = append(pingers, &rabbitmqPinger)
+			}
+		}
 	}
 
 	// Start multiple pings in parallel
-	eventCh := pkgpinger.StartMultiplePings(context.Background(), pingers)
+	eventCh := pkgpinger.StartMultiplePings(ctx, pingers)
 
 	// Stream events as line-delimited JSON
 	encoder := json.NewEncoder(w)
