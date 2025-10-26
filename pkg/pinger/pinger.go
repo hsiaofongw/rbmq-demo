@@ -51,7 +51,7 @@ func StartMultiplePings(pingers []Pinger) <-chan PingEvent {
 		var wg sync.WaitGroup
 
 		// Start all pingers
-		for _, pinger := range pingers {
+		for i := range pingers {
 			wg.Add(1)
 			go func(pinger Pinger) {
 				defer wg.Done()
@@ -63,7 +63,7 @@ func StartMultiplePings(pingers []Pinger) <-chan PingEvent {
 				for ev := range pingCh {
 					eventCh <- ev
 				}
-			}(pinger)
+			}(pingers[i])
 		}
 
 		// Wait for all pingers to complete
