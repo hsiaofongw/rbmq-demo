@@ -28,6 +28,61 @@ func (rbmqResponder *RabbitMQResponder) Init() error {
 	return nil
 }
 
+type TaskUpdate struct {
+	TaskMsg  *amqp.Delivery
+	Err      error
+	Envelope *amqp.Publishing
+}
+
+func (rbmqResponder *RabbitMQResponder) handleTask(ctx context.Context, taskMsg *amqp.Delivery) <-chan TaskUpdate {
+	log.Println("Received a message", "exchg", taskMsg.Exchange, "routing_key", taskMsg.RoutingKey, "correlation_id", taskMsg.CorrelationId, "message_id", taskMsg.MessageId, "reply_to", taskMsg.ReplyTo)
+
+	updatesCh := make(chan TaskUpdate)
+
+	go func(taskMsg *amqp.Delivery) {
+		defer close(updatesCh)
+
+		var pingCfg pkgsimpleping.PingConfiguration
+		err := json.Unmarshal(taskMsg.Body, &pingCfg)
+		if err != nil {
+			updatesCh <- TaskUpdate{
+				Err:     fmt.Errorf("failed to unmarshal the message: %w, message_id %s, correlation_id, %s, reply_to %s", err, taskMsg.MessageId, taskMsg.CorrelationId, taskMsg.ReplyTo),
+				TaskMsg: taskMsg,
+			}
+			return
+		}
+
+		log.Printf("Message %s corr_id %s is a PingConfiguration, destination %s", taskMsg.MessageId, taskMsg.CorrelationId, pingCfg.Destination)
+		pinger := pkgsimpleping.NewSimplePinger(&pingCfg)
+
+		log.Println("Starting to ping destination:", pingCfg.Destination, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId, "queue", taskMsg.ReplyTo)
+		pingEvents := pinger.Ping(ctx)
+
+		log.Println("Retrieving ping events about destination:", pingCfg.Destination)
+		for ev := range pingEvents {
+			evJson, err := json.Marshal(ev)
+			if err != nil {
+				log.Println("Failed to marshal ping event:", ev, "error:", err, "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId, "queue", taskMsg.ReplyTo)
+				continue
+			}
+			log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error)
+			updatesCh <- TaskUpdate{
+				Envelope: &amqp.Publishing{
+					ContentType:   "application/json",
+					CorrelationId: taskMsg.CorrelationId,
+					Body:          evJson,
+				},
+				TaskMsg: taskMsg,
+			}
+		}
+		updatesCh <- TaskUpdate{
+			TaskMsg: taskMsg,
+		}
+	}(taskMsg)
+
+	return updatesCh
+}
+
 func (rbmqResponder *RabbitMQResponder) GetQueueNameWithContext(ctx context.Context) (string, error) {
 	if !rbmqResponder.initalized {
 		panic("RabbitMQResponder not initialized")
@@ -79,6 +134,39 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 		}
 		defer ch.Close()
 
+		taskUpdatesCh := make(chan TaskUpdate)
+		taskUpdatesChCloser := make(chan interface{})
+		defer close(taskUpdatesChCloser)
+		go func() {
+			defer close(taskUpdatesCh)
+			log.Println("Starting to handle task updates...")
+			for {
+				select {
+				case <-taskUpdatesChCloser:
+					log.Println("Task updates channel closed, shutting down...")
+					return
+				case taskUpdate := <-taskUpdatesCh:
+					if taskUpdate.Err != nil {
+						log.Println("Failed to handle task:", taskUpdate.Err, "message_id", taskUpdate.TaskMsg.MessageId, "correlation_id", taskUpdate.TaskMsg.CorrelationId, "queue", taskUpdate.TaskMsg.ReplyTo)
+					} else if taskUpdate.Envelope != nil {
+						err = ch.PublishWithContext(ctx,
+							"",                         // exchange
+							taskUpdate.TaskMsg.ReplyTo, // routing key
+							false,                      // mandatory
+							false,                      // immediate
+							*taskUpdate.Envelope,
+						)
+						if err != nil {
+							log.Println("Failed to send back the ping event (ping reply) to the ping requester:", taskUpdate.Envelope, "error", err, "queue", taskUpdate.TaskMsg.ReplyTo, "correlation_id", taskUpdate.TaskMsg.CorrelationId)
+							continue
+						}
+					} else if taskUpdate.TaskMsg != nil {
+						taskUpdate.TaskMsg.Ack(false)
+					}
+				}
+			}
+		}()
+
 		q, err := ch.QueueDeclare(
 			"",    // auto generated queue name
 			false, // durable
@@ -101,7 +189,7 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 			return
 		}
 
-		msgs, err := ch.Consume(
+		taskMsgs, err := ch.Consume(
 			q.Name, // queue
 			"",     // consumer
 			false,  // auto-ack
@@ -119,54 +207,16 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 		for {
 			select {
 			case <-rbmqResponder.closeCh:
-				log.Println("Shutting down RabbitMQ responder...")
-				close(rbmqResponder.closeCh)
+				log.Println("Shutting down RabbitMQ responder...", "queue", q.Name)
 				return
-			case msg := <-msgs:
-				log.Println("Received a message", "exchg", msg.Exchange, "routing_key", msg.RoutingKey, "correlation_id", msg.CorrelationId, "message_id", msg.MessageId, "queue", q.Name, "reply_to", msg.ReplyTo)
-
-				var pingCfg pkgsimpleping.PingConfiguration
-				err := json.Unmarshal(msg.Body, &pingCfg)
-				if err != nil {
-					log.Println("Failed to unmarshal the message:", string(msg.Body), "error:", err)
-					msg.Ack(false)
-					continue
-				}
-
-				log.Println("Received a PingConfiguration from broker:", conn.RemoteAddr(), "destination:", pingCfg.Destination)
-
-				pinger := pkgsimpleping.NewSimplePinger(&pingCfg)
-
-				log.Println("Starting to ping destination:", pingCfg.Destination)
-				pingEvents := pinger.Ping(ctx)
-
-				log.Println("Retrieving ping events about destination:", pingCfg.Destination)
-				for ev := range pingEvents {
-					evJson, err := json.Marshal(ev)
-					if err != nil {
-						log.Println("Failed to marshal the event:", ev, "error:", err)
-						continue
+			case taskMsg := <-taskMsgs:
+				go func(taskMsg amqp.Delivery) {
+					log.Println("Starting to handle task:", "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId, "queue", taskMsg.ReplyTo)
+					for taskUpdate := range rbmqResponder.handleTask(ctx, &taskMsg) {
+						log.Println("New task update:", "message_id", taskUpdate.TaskMsg.MessageId, "correlation_id", taskUpdate.TaskMsg.CorrelationId, "queue", taskUpdate.TaskMsg.ReplyTo)
+						taskUpdatesCh <- taskUpdate
 					}
-					log.Println("Ping reply:", "type", ev.Type, "metadata", ev.Metadata, "error", ev.Error)
-
-					err = ch.PublishWithContext(ctx,
-						"",          // exchange
-						msg.ReplyTo, // routing key
-						false,       // mandatory
-						false,       // immediate
-						amqp.Publishing{
-							ContentType:   "application/json",
-							CorrelationId: msg.CorrelationId,
-							Body:          evJson,
-						},
-					)
-					if err != nil {
-						log.Println("Failed to send back the ping event (ping reply) to the ping requester:", ev, "error", err, "queue", msg.ReplyTo, "correlation_id", msg.CorrelationId)
-						continue
-					}
-				}
-
-				msg.Ack(false)
+				}(taskMsg)
 			}
 		}
 	}()
