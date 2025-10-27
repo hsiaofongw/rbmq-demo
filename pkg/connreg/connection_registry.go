@@ -1,6 +1,7 @@
 package connreg
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -206,4 +207,8 @@ func (cr *ConnRegistry) SearchByAttributes(expected ConnectionAttributes) (data 
 	})
 
 	return data, err
+}
+
+func (cr *ConnRegistry) Shutdown(ctx context.Context) error {
+	return nil
 }

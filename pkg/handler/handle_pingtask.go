@@ -22,7 +22,7 @@ type PingTaskHandler struct {
 	ConnRegistry       *pkgconnreg.ConnRegistry
 }
 
-func NewPingTaskHandler(ctx context.Context) (*PingTaskHandler, error) {
+func NewPingTaskHandler(ctx context.Context, connRegistry *pkgconnreg.ConnRegistry) (*PingTaskHandler, error) {
 	rbmqConn, err := pkgctx.GetRabbitMQConnection(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get RabbitMQ connection: %w", err)
@@ -30,6 +30,7 @@ func NewPingTaskHandler(ctx context.Context) (*PingTaskHandler, error) {
 
 	return &PingTaskHandler{
 		RabbitMQConnection: rbmqConn,
+		ConnRegistry:       connRegistry,
 	}, nil
 }
 

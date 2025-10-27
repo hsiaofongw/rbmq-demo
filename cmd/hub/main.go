@@ -42,15 +42,14 @@ func main() {
 
 	ctx = pkgctx.WithRabbitMQConnection(ctx, conn)
 
-	pingTaskHandler, err := pkghandler.NewPingTaskHandler(ctx)
+	sm := pkgsafemap.NewSafeMap()
+
+	cr := pkgconnreg.NewConnRegistry(sm)
+
+	pingTaskHandler, err := pkghandler.NewPingTaskHandler(ctx, cr)
 	if err != nil {
 		log.Fatalf("Failed to create ping task handler: %v", err)
 	}
-
-	sm := pkgsafemap.NewSafeMap()
-	defer sm.Close()
-
-	cr := pkgconnreg.NewConnRegistry(sm)
 
 	wsHandler := pkghandler.NewWebsocketHandler(&upgrader, cr)
 	connsHandler := pkghandler.NewConnsHandler(cr)
@@ -81,6 +80,10 @@ func main() {
 	}()
 
 	<-sigs
+	log.Println("Shutting down safe map...")
+	sm.Close()
+	log.Println("Safe map shut down successfully")
+
 	log.Println("Shutting down server...")
 	ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 	defer cancel()
