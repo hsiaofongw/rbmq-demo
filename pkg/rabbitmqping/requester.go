@@ -60,7 +60,7 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		q, err := ch.QueueDeclare(
 			"",    // queue name, generated randomly
 			false, // durable
-			false, // delete when unused
+			true,  // delete when unused
 			false, // exclusive
 			false, // no-wait
 			nil,   // arguments
@@ -69,7 +69,6 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 			respondWithError(fmt.Errorf("failed to declare a RabbitMQ queue within RabbitMQPinger: %w", err))
 			return
 		}
-		defer ch.QueueDelete(q.Name, false, false, false)
 
 		// these 'msgs' are responses from the RPC server
 		msgs, err := ch.Consume(
@@ -126,6 +125,11 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 		for msg := range msgs {
 			log.Println("Received a message", "exchg", msg.Exchange, "routing_key", msg.RoutingKey, "correlation_id", msg.CorrelationId, "message_id", msg.MessageId)
 			if msg.CorrelationId == corrId {
+				if len(msg.Body) == 0 {
+					// A nill message body signals the end of the message stream
+					break
+				}
+
 				var pingEvent pkgpinger.PingEvent
 				err := json.Unmarshal(msg.Body, &pingEvent)
 				if err != nil {
@@ -136,7 +140,6 @@ func (rbmqPinger *RabbitMQPinger) Ping(ctx context.Context) <-chan pkgpinger.Pin
 				evChan <- pingEvent
 			}
 		}
-
 	}()
 
 	return evChan

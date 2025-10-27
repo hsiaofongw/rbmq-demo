@@ -162,7 +162,21 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 							continue
 						}
 					} else if taskUpdate.TaskMsg != nil {
-						taskUpdate.TaskMsg.Ack(false)
+						err = ch.PublishWithContext(ctx,
+							"",                         // exchange
+							taskUpdate.TaskMsg.ReplyTo, // routing key
+							false,                      // mandatory
+							false,                      // immediate
+							amqp.Publishing{
+								ContentType:   "application/octet-stream",
+								CorrelationId: taskUpdate.TaskMsg.CorrelationId,
+								Body:          nil,
+							},
+						)
+						if err != nil {
+							log.Println("Failed to send back the final task update to the ping requester:", taskUpdate.TaskMsg.ReplyTo, "correlation_id", taskUpdate.TaskMsg.CorrelationId, "error", err)
+							continue
+						}
 					}
 				}
 			}
@@ -211,6 +225,7 @@ func (rbmqResponder *RabbitMQResponder) ServeRPC(ctx context.Context) <-chan err
 				log.Println("Shutting down RabbitMQ responder...", "queue", q.Name)
 				return
 			case taskMsg := <-taskMsgs:
+				taskMsg.Ack(false) // acknowledge the message so the the sender can immediately send the next message
 				go func(taskMsg amqp.Delivery) {
 					log.Println("Starting to handle task:", "message_id", taskMsg.MessageId, "correlation_id", taskMsg.CorrelationId, "queue", taskMsg.ReplyTo)
 					for taskUpdate := range rbmqResponder.handleTask(ctx, &taskMsg) {
